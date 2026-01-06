@@ -17,14 +17,12 @@ import { supabase, isSupabaseConfigured } from './lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import type { Profile, TimeEntry, DailyNote } from './types';
 import { SettingsContext, SettingsContextType } from './context/SettingsContext';
-import { ToastProvider, useToast } from './context/ToastContext'; // Import ToastProvider
 import { t as translations } from './translations';
 
-// Extract logic to inner component to use Toast hook
+// Extract logic to inner component
 const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
   const [theme, setTheme] = useLocalStorage<'light' | 'dark'>('theme', 'dark');
   const [colorScheme, setColorScheme] = useLocalStorage<'rose' | 'blue'>('colorScheme', 'rose');
-  const toast = useToast();
   
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -69,36 +67,35 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
     if (data) setEmployees(data);
   }, []);
 
-  // REALTIME SUBSCRIPTION
-  // This replaces the polling interval with instant updates via WebSockets
+  // Supabase Realtime Subscription & Polling Fallback
   useEffect(() => {
-    // Initial fetch
-    fetchActiveShift(session?.user ?? null);
-    if (session) fetchEmployees();
+    const syncData = () => {
+        fetchActiveShift(session?.user ?? null);
+        if (session) fetchEmployees();
+    };
 
-    if (!session) return;
+    syncData(); // Initial fetch
 
+    // 1. Subscribe to Realtime changes for instant updates
     const channel = supabase
-      .channel('public:time_entries')
+      .channel('global_time_entries')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'time_entries',
-        },
-        (payload) => {
-          // console.log('Realtime change received:', payload);
-          // 1. Refresh active shift for the current user (in case Admin forced end)
-          fetchActiveShift(session.user);
-          // 2. Trigger global data refresh for dashboards/modals
-          refreshData();
+        { event: '*', schema: 'public', table: 'time_entries' },
+        () => {
+            // console.log('Realtime update received!');
+            syncData();
+            refreshData();
         }
       )
       .subscribe();
 
+    // 2. Keep polling as a fallback (e.g. if realtime disconnects)
+    const intervalId = setInterval(syncData, 10000);
+
     return () => {
-      supabase.removeChannel(channel);
+        clearInterval(intervalId);
+        supabase.removeChannel(channel);
     };
   }, [session, fetchActiveShift, fetchEmployees, refreshData]);
 
@@ -106,9 +103,8 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
     if (!session) return;
     const { error } = await supabase.from('time_entries').insert({ user_id: session.user.id, start_time: new Date().toISOString(), revenue: 0 });
     if (error) {
-        toast.error("Lỗi khi bắt đầu ca: " + error.message);
+        console.error("Lỗi khi bắt đầu ca: " + error.message);
     } else {
-        // Removed success toast as requested
         refreshData();
     }
   };
@@ -169,9 +165,8 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
           : await supabase.from('time_entries').insert({ ...entry, user_id });
       
       if (error) {
-          toast.error("Lỗi khi lưu: " + error.message);
+          console.error("Lỗi khi lưu: " + error.message);
       } else {
-          // Removed success toast as requested
           refreshData();
           setIsTimeEntryModalOpen(false);
           setEditingEntry(null);
@@ -208,7 +203,6 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
               file_url = urlData.publicUrl;
           }
           await supabase.from('daily_notes').upsert({ user_id: noteOwnerId, date: ymdFormatter.format(selectedDateForNote), note: noteText, file_url }, { onConflict: 'user_id, date' });
-          // Removed success toast
           refreshData();
           handleCloseNoteModal();
       } catch(error: any) { setNoteModalError(error.message); } finally { setIsSavingNote(false); }
@@ -219,7 +213,6 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
       setIsSavingNote(true);
       try {
           await supabase.from('daily_notes').delete().eq('id', activeNote.id);
-          // Removed success toast
           refreshData();
           handleCloseNoteModal();
       } catch(error: any) { setNoteModalError(error.message); } finally { setIsSavingNote(false); }
@@ -246,7 +239,8 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
           activeShift={activeShift} onStartShift={handleStartShift} onEndShift={handleEndShiftRequest}
           dataVersion={dataVersion}
         />
-        <main className="container mx-auto px-4 py-8 flex-grow flex flex-col">
+        {/* Added padding-top to compensate for fixed header */}
+        <main className="container mx-auto px-4 pb-8 pt-32 md:pt-28 flex-grow flex flex-col">
           {isSupabaseConfigured ? (
               profile?.role === 'admin' && isAdminView ? 
               <AdminDashboard onOpenNoteModal={handleOpenNoteModal} onManageEntries={() => setIsManageEntriesModalOpen(true)} /> : 
@@ -257,7 +251,7 @@ const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
         <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
         <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} session={session} />
         <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />
-        {isTodaysShiftsOpen && <ShiftsNotificationModal isOpen={isTodaysShiftsOpen} onClose={() => setIsTodaysShiftsOpen(false)} employees={employees} dataVersion={dataVersion} />}
+        {isTodaysShiftsOpen && <ShiftsNotificationModal isOpen={isTodaysShiftsOpen} onClose={() => setIsTodaysShiftsOpen(false)} employees={employees} />}
         {isTimeEntryModalOpen && <TimeEntryModal isOpen={isTimeEntryModalOpen} onClose={() => setIsTimeEntryModalOpen(false)} onSave={handleSaveEntry} entry={editingEntry as TimeEntry | null} />}
         {isNoteModalOpen && selectedDateForNote && (
           <DailyNoteModal isOpen={isNoteModalOpen} onClose={handleCloseNoteModal} onSave={handleSaveNote} onDelete={handleDeleteNote} note={activeNote} date={selectedDateForNote} isSaving={isSavingNote} error={noteModalError} readOnly={isNoteReadOnly} />
@@ -279,8 +273,6 @@ export default function App() {
   }, []);
   
   return (
-    <ToastProvider>
       <MainApp session={session} />
-    </ToastProvider>
   );
 }

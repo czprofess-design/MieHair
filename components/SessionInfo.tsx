@@ -18,7 +18,7 @@ const SessionInfo: React.FC = () => {
       .then(data => setIp(data.ip))
       .catch((err) => {
         if (err.name !== 'AbortError') {
-            setIp('Unavailable');
+            setIp('N/A');
         }
       });
       
@@ -40,14 +40,14 @@ const SessionInfo: React.FC = () => {
   return (
     <div className="flex items-center space-x-4 text-xs">
       <div className="flex items-center space-x-1.5">
-        <GlobeIcon size={16} className="text-[var(--accent-color)]" />
-        <span>{t.ipAddress}:</span>
-        <span className="font-mono">{ip}</span>
+        <GlobeIcon size={16} className="text-blue-500" />
+        <span className="hidden sm:inline font-medium text-gray-500 dark:text-gray-400">{t.ipAddress}:</span>
+        <span className="font-mono font-semibold text-gray-700 dark:text-gray-300">{ip}</span>
       </div>
       <div className="flex items-center space-x-1.5">
-        <ClockIcon size={16} className="text-[var(--accent-color)]" />
-        <span>{t.sessionTime}:</span>
-        <span className="font-mono">{sessionTime}</span>
+        <ClockIcon size={16} className="text-orange-500" />
+        <span className="hidden sm:inline font-medium text-gray-500 dark:text-gray-400">{t.sessionTime}:</span>
+        <span className="font-mono font-semibold text-gray-700 dark:text-gray-300">{sessionTime}</span>
       </div>
     </div>
   );

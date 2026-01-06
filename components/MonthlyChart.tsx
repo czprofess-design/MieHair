@@ -44,7 +44,7 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
   const maxHours = Math.max(8, ...chartData.map(d => d.hours));
   const maxRevenue = Math.max(1000000, ...chartData.map(d => d.revenue));
 
-  // SVG dimensions - Reduced height for a slimmer look
+  // SVG dimensions
   const width = 1000;
   const height = 220; 
   const paddingLeft = 50;
@@ -81,22 +81,22 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-2">
             <h3 className="text-white/90 font-bold text-sm flex items-center gap-2">
                 <div className="w-1 h-4 bg-gradient-to-b from-sky-400 to-indigo-600 rounded-full"></div>
-                Xu hướng Hiệu suất
+                Biểu Đồ Hiệu Suất
             </h3>
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1.5">
                     <div className="w-2 h-0.5 bg-sky-500"></div>
-                    <span className="text-[10px] font-bold text-gray-400">Giờ làm (h)</span>
+                    <span className="text-[10px] font-bold text-gray-400">Giờ Làm (h)</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                     <div className="w-2 h-0.5 bg-emerald-500"></div>
-                    <span className="text-[10px] font-bold text-gray-400">Doanh thu (₫)</span>
+                    <span className="text-[10px] font-bold text-gray-400">Doanh Thu (₫)</span>
                 </div>
             </div>
         </div>
 
         <div className="relative w-full overflow-visible">
-            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible">
+            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible font-sans">
                 <defs>
                     <linearGradient id="gradHour" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.15" />
@@ -108,7 +108,6 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
                     </linearGradient>
                 </defs>
 
-                {/* Y-Axis Grid Lines & Labels (Left: Hours) */}
                 {[0, 0.25, 0.5, 0.75, 1].map(v => (
                     <g key={`grid-${v}`}>
                         <line 
@@ -119,38 +118,33 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
                         />
                         <text 
                             x={paddingLeft - 8} y={paddingTop + (1-v) * chartHeight + 4} 
-                            textAnchor="end" className="fill-gray-600 text-[9px] font-medium"
+                            textAnchor="end" className="fill-gray-600 text-[9px] font-bold"
                         >
                             {(v * maxHours).toFixed(0)}h
                         </text>
                         <text 
                             x={width - paddingRight + 8} y={paddingTop + (1-v) * chartHeight + 4} 
-                            textAnchor="start" className="fill-emerald-600/60 text-[9px] font-medium"
+                            textAnchor="start" className="fill-emerald-600/60 text-[9px] font-bold"
                         >
                             {Math.round((v * maxRevenue) / 1000)}k
                         </text>
                     </g>
                 ))}
 
-                {/* Shaded Areas */}
                 <path d={createAreaPath(hourPoints)} fill="url(#gradHour)" />
                 <path d={createAreaPath(revenuePoints)} fill="url(#gradRev)" />
 
-                {/* Lines - Thinner strokeWidth: 1.5 */}
                 <path 
                     d={createPath(hourPoints)} 
                     fill="none" stroke="#0ea5e9" strokeWidth="1.5" 
                     strokeLinecap="round" strokeLinejoin="round"
-                    className="drop-shadow-[0_0_3px_rgba(14,165,233,0.3)]"
                 />
                 <path 
                     d={createPath(revenuePoints)} 
                     fill="none" stroke="#10b981" strokeWidth="1.5" 
                     strokeLinecap="round" strokeLinejoin="round"
-                    className="drop-shadow-[0_0_3px_rgba(16,185,129,0.3)]"
                 />
 
-                {/* Dots & Interactive Columns */}
                 {chartData.map((d, i) => {
                     const hp = hourPoints[i];
                     const rp = revenuePoints[i];
@@ -159,11 +153,9 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
 
                     return (
                         <g key={i}>
-                            {/* Dots only visible on hover or if data exists */}
                             {(d.hours > 0 || isActive) && <circle cx={hp.x} cy={hp.y} r={isActive ? 4 : 2} fill="#0ea5e9" />}
                             {(d.revenue > 0 || isActive) && <circle cx={rp.x} cy={rp.y} r={isActive ? 4 : 2} fill="#10b981" />}
                             
-                            {/* Invisible interaction layer */}
                             <rect 
                                 x={hp.x - step/2} y={paddingTop} width={step} height={chartHeight}
                                 fill="transparent" className="cursor-crosshair"
@@ -171,7 +163,6 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
                                 onMouseLeave={() => setHoverIdx(null)}
                             />
 
-                            {/* X-Axis labels (logic to avoid overlap) */}
                             {(chartData.length <= 15 || i % Math.ceil(chartData.length/10) === 0) && (
                                 <text 
                                     x={hp.x} y={height - 10} 
@@ -186,7 +177,6 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
                 })}
             </svg>
 
-            {/* Floating Tooltip */}
             {hoverIdx !== null && (
                 <div 
                     className="absolute pointer-events-none bg-slate-900 border border-slate-700 p-2.5 rounded-xl shadow-2xl z-50 animate-fadeIn backdrop-blur-md"
@@ -196,15 +186,15 @@ const MonthlyChart: React.FC<MonthlyChartProps> = ({ entries, range }) => {
                         transform: 'translateX(-50%)'
                     }}
                 >
-                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1.5 border-b border-slate-700 pb-1">Ngày {chartData[hoverIdx].label}</p>
+                    <p className="text-[10px] font-bold text-gray-400 mb-1.5 border-b border-slate-700 pb-1">Ngày {chartData[hoverIdx].label}</p>
                     <div className="space-y-1 min-w-[100px]">
                         <div className="flex justify-between items-center gap-4">
-                            <span className="text-[10px] text-sky-400 font-semibold">Giờ làm:</span>
-                            <span className="text-[10px] text-white font-mono">{chartData[hoverIdx].hours.toFixed(1)}h</span>
+                            <span className="text-[10px] text-sky-400 font-bold">Giờ Làm:</span>
+                            <span className="text-[10px] text-white font-bold">{chartData[hoverIdx].hours.toFixed(1)}h</span>
                         </div>
                         <div className="flex justify-between items-center gap-4">
-                            <span className="text-[10px] text-emerald-400 font-semibold">Doanh thu:</span>
-                            <span className="text-[10px] text-white font-mono">{t.currencySymbol}{chartData[hoverIdx].revenue.toLocaleString()}</span>
+                            <span className="text-[10px] text-emerald-400 font-bold">Doanh Thu:</span>
+                            <span className="text-[10px] text-white font-bold">{t.currencySymbol}{chartData[hoverIdx].revenue.toLocaleString()}</span>
                         </div>
                     </div>
                 </div>

@@ -7,9 +7,10 @@ interface ProductCardProps {
   product: Product;
   onProductClick: (product: Product) => void;
   t: Translation;
+  index: number;
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({ product, onProductClick, t }) => {
+const ProductCard: React.FC<ProductCardProps> = ({ product, onProductClick, t, index }) => {
   const { addToCart } = useContext(CartContext);
   const [added, setAdded] = useState(false);
 
@@ -22,36 +23,41 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onProductClick, t })
   
   return (
     <div 
-      className="group relative bg-white/60 dark:bg-gray-800/40 backdrop-blur-xl rounded-3xl shadow-xl hover:shadow-2xl border border-white/20 overflow-hidden transition-all duration-500 hover:-translate-y-2 cursor-pointer"
+      className="group relative bg-white/70 dark:bg-gray-800/40 backdrop-blur-xl rounded-[2rem] shadow-xl hover:shadow-[var(--breathing-glow-color-strong)] border border-white/20 overflow-hidden transition-all duration-500 hover:-translate-y-3 cursor-pointer opacity-0 animate-fadeInUp"
+      style={{ animationDelay: `${index * 100}ms` }}
       onClick={() => onProductClick(product)}
     >
-      <div className="aspect-video w-full overflow-hidden relative">
+      {/* Hiệu ứng viền Gradient khi hover */}
+      <div className="absolute inset-0 p-[2px] rounded-[2rem] bg-gradient-to-br from-transparent to-transparent group-hover:from-[var(--gradient-from)] group-hover:to-[var(--gradient-to)] transition-all duration-700 -z-10 opacity-50"></div>
+
+      <div className="aspect-[4/3] w-full overflow-hidden relative">
         <img
           src={product.image_url}
           alt={product.name}
-          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-in-out"
+          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-60 group-hover:opacity-80 transition-opacity"></div>
         
-        <div className="absolute top-4 right-4 bg-white/20 backdrop-blur-md px-3 py-1 rounded-full border border-white/30">
-            <p className="text-white text-xs font-black uppercase tracking-widest">Premium</p>
+        <div className="absolute top-4 right-4 bg-white/10 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/20 shadow-lg">
+            <p className="text-white text-xs font-semibold capitalize">Mie Exclusive</p>
+        </div>
+
+        <div className="absolute bottom-4 left-6 right-6 transform group-hover:translate-y-[-5px] transition-transform duration-500">
+            <h3 className="text-xl font-bold text-white leading-tight drop-shadow-md">
+                {product.name}
+            </h3>
         </div>
       </div>
 
-      <div className="p-6 space-y-4">
-        <div>
-            <h3 className="text-xl font-black text-gray-800 dark:text-white group-hover:text-[var(--accent-color)] transition-colors duration-300 truncate">
-            {product.name}
-            </h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2 h-[2.5em] leading-relaxed italic">
-                {product.description}
-            </p>
-        </div>
+      <div className="p-6 space-y-5">
+        <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 leading-relaxed italic font-light">
+            {product.description}
+        </p>
 
-        <div className="flex justify-between items-center pt-2">
-          <div className="space-y-0.5">
-             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Giá niêm yết</p>
-             <p className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-[var(--gradient-from)] to-[var(--gradient-to)]">
+        <div className="flex justify-between items-end">
+          <div className="space-y-0">
+             <p className="text-xs font-semibold text-gray-400 capitalize mb-1">Giá ưu đãi</p>
+             <p className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[var(--gradient-from)] to-[var(--gradient-to)] leading-none">
                 ₫{product.price.toLocaleString()}
              </p>
           </div>
@@ -59,15 +65,15 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onProductClick, t })
           <button 
             onClick={handleAddToCart}
             disabled={added}
-            className={`px-5 py-2.5 text-xs font-black tracking-widest uppercase text-white bg-gradient-to-r from-[var(--gradient-from)] to-[var(--gradient-to)] rounded-2xl shadow-lg transform transition-all duration-300 hover:scale-105 active:scale-95 disabled:opacity-50 ${added ? 'from-emerald-500 to-teal-600 ring-2 ring-emerald-500/20' : ''}`}
+            className={`h-10 px-6 text-xs font-semibold capitalize text-white bg-gradient-to-r from-[var(--gradient-from)] to-[var(--gradient-to)] rounded-2xl shadow-lg transform transition-all duration-300 hover:brightness-110 hover:shadow-[var(--breathing-glow-color)] active:scale-90 disabled:opacity-50 ${added ? 'from-emerald-500 to-teal-600 ring-2 ring-emerald-500/20' : ''}`}
           >
-            {added ? "Đã thêm!" : "Thêm vào giỏ"}
+            {added ? "Done!" : "Mua ngay"}
           </button>
         </div>
       </div>
 
-      {/* Hiệu ứng viền phát sáng khi hover */}
-      <div className="absolute inset-0 border-2 border-transparent group-hover:border-[var(--accent-color)]/30 rounded-3xl transition-colors duration-500 pointer-events-none"></div>
+      {/* Trang trí góc thẻ */}
+      <div className="absolute top-0 left-0 w-24 h-24 bg-gradient-to-br from-[var(--gradient-from)]/20 to-transparent blur-2xl -z-10 group-hover:scale-150 transition-transform duration-700"></div>
     </div>
   );
 };

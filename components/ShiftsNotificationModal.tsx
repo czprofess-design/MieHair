@@ -3,16 +3,15 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../context/SettingsContext';
 import type { Profile, TimeEntry } from '../types';
-import { XIcon, SearchIcon, StopIcon, EditIcon, TrashIcon, ClockIcon } from './Icons';
+import { XIcon, SearchIcon, StopIcon, EditIcon, TrashIcon, ClockIcon, UsersIcon, RadioIcon, CalendarIcon } from './Icons';
 import TimeEntryModal from './TimeEntryModal';
 import ConfirmModal from './ConfirmModal';
-import { useToast } from '../context/ToastContext';
+import CustomDropdown from './CustomDropdown';
 
 interface ShiftsNotificationModalProps {
     isOpen: boolean;
     onClose: () => void;
     employees: Profile[];
-    dataVersion?: number; // Add prop to listen for global updates
 }
 
 const formatPreciseDuration = (startISO: string, endISO: string) => {
@@ -51,22 +50,19 @@ const ActiveTimer: React.FC<{ startISO: string }> = ({ startISO }) => {
     return <span>{elapsed}</span>;
 };
 
-const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpen, onClose, employees, dataVersion = 0 }) => {
+const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpen, onClose, employees }) => {
     const { t } = useSettings();
-    const toast = useToast();
     const [shifts, setShifts] = useState<TimeEntry[]>([]);
     const [loading, setLoading] = useState(false);
     
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedUser, setSelectedUser] = useState('all');
-    const [selectedStatus, setSelectedStatus] = useState('all');
-    const [timeRange, setTimeRange] = useState('7d');
+    const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+    const [selectedStatus, setSelectedStatus] = useState<string[]>([]);
+    const [timeRange, setTimeRange] = useState<string[]>(['this_week']);
 
-    // Edit State
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
 
-    // Confirmation State
     const [confirmState, setConfirmState] = useState<{
         isOpen: boolean;
         type: 'delete' | 'force_end' | 'batch_stop';
@@ -88,125 +84,74 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
         setLoading(true);
         const now = new Date();
         let startDate = new Date();
+        let endDate = new Date(now.getTime() + 86400000); // Mặc định là ngày mai
         
-        if (timeRange === '24h') startDate.setDate(now.getDate() - 1);
-        else if (timeRange === '7d') startDate.setDate(now.getDate() - 7);
-        else if (timeRange === '30d') startDate.setDate(now.getDate() - 30);
+        const currentRange = timeRange[0] || 'this_week';
+        
+        if (currentRange === 'today') {
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        } else if (currentRange === 'this_week') {
+            const day = now.getDay();
+            const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
+            startDate = new Date(now.setDate(diff));
+            startDate.setHours(0,0,0,0);
+        } else if (currentRange === 'last_week') {
+            const day = now.getDay();
+            const diffToMonday = now.getDate() - day + (day === 0 ? -6 : 1) - 7;
+            startDate = new Date(now.getFullYear(), now.getMonth(), diffToMonday);
+            startDate.setHours(0,0,0,0);
+            endDate = new Date(startDate.getTime() + 7 * 86400000);
+        } else if (currentRange === 'this_month') {
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        } else if (currentRange === 'last_month') {
+            startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            endDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
 
         const { data, error } = await supabase
             .from('time_entries')
             .select('*')
             .gte('start_time', startDate.toISOString())
+            .lt('start_time', endDate.toISOString())
             .order('start_time', { ascending: false });
 
         if (!error) setShifts(data || []);
         setLoading(false);
     }, [timeRange]);
 
-    // Refetch when isOpen is true OR when dataVersion changes (Realtime update)
     useEffect(() => {
-        if (isOpen) fetchShifts();
-    }, [isOpen, fetchShifts, dataVersion]);
-
-    // --- ACTIONS SETUP ---
-
-    const promptForceEndShift = (e: React.MouseEvent, shiftId: number) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setConfirmState({
-            isOpen: true,
-            type: 'force_end',
-            id: shiftId,
-            title: 'Kết thúc ca làm việc',
-            message: 'Bạn có chắc muốn kết thúc ca làm việc này ngay bây giờ? Thời gian kết thúc sẽ được đặt là hiện tại.',
-            confirmText: 'Kết thúc ngay',
-            confirmType: 'warning'
-        });
-    };
-
-    const promptDeleteShift = (shiftId: number) => {
-        setConfirmState({
-            isOpen: true,
-            type: 'delete',
-            id: shiftId,
-            title: 'Xác nhận xóa',
-            message: 'Bạn có chắc chắn muốn xóa vĩnh viễn ca làm việc này không? Hành động này không thể hoàn tác.',
-            confirmText: 'Xóa vĩnh viễn',
-            confirmType: 'danger'
-        });
-    };
-
-    const promptBatchStop = () => {
-        const activeShiftsCount = shifts.filter(s => !s.end_time).length;
-        if (activeShiftsCount === 0) return;
-
-        setConfirmState({
-            isOpen: true,
-            type: 'batch_stop',
-            title: 'Dừng tất cả ca',
-            message: `Bạn có chắc muốn kết thúc ${activeShiftsCount} ca đang hoạt động ngay lập tức?`,
-            confirmText: 'Dừng tất cả',
-            confirmType: 'danger'
-        });
-    };
-
-    // --- ACTIONS EXECUTION ---
+        if (isOpen) {
+            fetchShifts();
+            const channel = supabase.channel('shifts_modal_realtime').on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, () => fetchShifts()).subscribe();
+            return () => { supabase.removeChannel(channel); };
+        }
+    }, [isOpen, fetchShifts]);
 
     const handleConfirmAction = async () => {
         if (confirmState.type === 'force_end' && confirmState.id) {
-            const { error } = await supabase
-                .from('time_entries')
-                .update({ end_time: new Date().toISOString() })
-                .eq('id', confirmState.id);
-            if (error) console.error("Lỗi: " + error.message);
-            else {
-                fetchShifts();
-            }
-        } 
-        else if (confirmState.type === 'delete' && confirmState.id) {
-            const { error } = await supabase
-                .from('time_entries')
-                .delete()
-                .eq('id', confirmState.id);
-            if (error) console.error("Lỗi khi xóa: " + error.message);
-            else {
-                fetchShifts();
-            }
-        }
-        else if (confirmState.type === 'batch_stop') {
-            const activeShifts = shifts.filter(s => !s.end_time);
-            const ids = activeShifts.map(s => s.id);
-            const now = new Date().toISOString();
-            const { error } = await supabase
-                .from('time_entries')
-                .update({ end_time: now })
-                .in('id', ids);
-            if (error) console.error("Lỗi khi dừng hàng loạt: " + error.message);
-            else {
-                fetchShifts();
-            }
+            await supabase.from('time_entries').update({ end_time: new Date().toISOString() }).eq('id', confirmState.id);
+        } else if (confirmState.type === 'delete' && confirmState.id) {
+            await supabase.from('time_entries').delete().eq('id', confirmState.id);
+        } else if (confirmState.type === 'batch_stop') {
+            const ids = shifts.filter(s => !s.end_time).map(s => s.id);
+            await supabase.from('time_entries').update({ end_time: new Date().toISOString() }).in('id', ids);
         }
     };
 
-    const handleEditClick = (shift: TimeEntry) => {
-        setEditingEntry(shift);
+    const handleEditClick = (entry: TimeEntry) => {
+        setEditingEntry(entry);
         setIsEditModalOpen(true);
     };
 
     const handleSaveEdit = async (updatedEntry: Partial<TimeEntry>) => {
         if (!editingEntry) return;
-        
         const { error } = await supabase
             .from('time_entries')
-            .update({
-                start_time: updatedEntry.start_time,
-                end_time: updatedEntry.end_time,
-                revenue: updatedEntry.revenue
-            })
+            .update(updatedEntry)
             .eq('id', editingEntry.id);
 
         if (error) {
-            console.error("Error updating entry:", error);
+            console.error("Lỗi khi cập nhật ca làm việc:", error.message);
         } else {
             setIsEditModalOpen(false);
             setEditingEntry(null);
@@ -214,181 +159,141 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
         }
     };
 
-    // --- FILTERING ---
-
     const filteredShifts = useMemo(() => {
         return shifts.filter(shift => {
             const employee = employees.find(e => e.id === shift.user_id);
             const matchesSearch = (employee?.full_name || '').toLowerCase().includes(searchQuery.toLowerCase());
-            const matchesUser = selectedUser === 'all' || shift.user_id === selectedUser;
-            const matchesStatus = selectedStatus === 'all' || 
-                (selectedStatus === 'active' && !shift.end_time) || 
-                (selectedStatus === 'finished' && shift.end_time);
+            const matchesUser = selectedUserIds.length === 0 || selectedUserIds.includes(shift.user_id);
+            
+            const currentStatus = selectedStatus[0] || 'all';
+            const matchesStatus = currentStatus === 'all' || (currentStatus === 'active' && !shift.end_time) || (currentStatus === 'finished' && shift.end_time);
             
             return matchesSearch && matchesUser && matchesStatus;
         });
-    }, [shifts, searchQuery, selectedUser, selectedStatus, employees]);
+    }, [shifts, searchQuery, selectedUserIds, selectedStatus, employees]);
 
-    const activeShiftCount = shifts.filter(s => !s.end_time).length;
+    const employeeOptions = useMemo(() => employees.map(e => ({ 
+        id: e.id, 
+        label: e.full_name,
+        icon: e.avatar_url ? <img src={e.avatar_url} className="w-4 h-4 rounded-full object-cover" /> : <UsersIcon size={12} className="text-slate-500" />
+    })), [employees]);
+
+    const statusOptions = [
+        { id: 'all', label: 'Tất cả' },
+        { id: 'active', label: 'Live', icon: <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> },
+        { id: 'finished', label: 'Xong', icon: <div className="w-2 h-2 rounded-full bg-slate-500" /> }
+    ];
+
+    const rangeOptions = [
+        { id: 'today', label: 'Hôm nay' },
+        { id: 'this_week', label: 'Tuần này' },
+        { id: 'last_week', label: 'Tuần trước' },
+        { id: 'this_month', label: 'Tháng này' },
+        { id: 'last_month', label: 'Tháng trước' }
+    ];
 
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
-            <div 
-                className="bg-[#1a1f2e] w-full max-w-5xl rounded-3xl shadow-2xl border border-slate-800/50 overflow-hidden flex flex-col max-h-[90vh]"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="p-5 flex justify-between items-center bg-[#1a1f2e] border-b border-slate-800/50">
+            <div className="bg-[#1a1f2e] w-full md:w-[1000px] h-[85vh] rounded-3xl shadow-2xl border border-slate-800/50 overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                
+                <div className="h-16 flex-none px-5 flex justify-between items-center bg-[#1a1f2e] border-b border-slate-800/50">
                     <div className="flex items-center gap-3">
-                        <h2 className="text-lg font-medium text-slate-100 tracking-wide">
-                            Nhật ký hoạt động
-                        </h2>
-                        {activeShiftCount > 0 && (
-                            <button 
-                                onClick={promptBatchStop}
-                                className="flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-[10px] font-bold uppercase tracking-wide rounded-full transition-all animate-pulse"
-                            >
-                                <StopIcon size={10} />
-                                <span className="hidden sm:inline">Dừng tất cả ({activeShiftCount})</span>
-                                <span className="sm:hidden">Dừng ({activeShiftCount})</span>
+                        <h2 className="text-base md:text-lg font-medium text-slate-100 tracking-wide truncate">Nhật ký hoạt động</h2>
+                        {shifts.filter(s => !s.end_time).length > 0 && (
+                            <button onClick={() => setConfirmState({ isOpen: true, type: 'batch_stop', title: 'Dừng tất cả', message: 'Dừng tất cả ca đang chạy?', confirmText: 'Dừng ngay', confirmType: 'danger' })} className="flex items-center gap-1 px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-semibold capitalize rounded-full transition-all">
+                                <StopIcon size={10} /> {shifts.filter(s => !s.end_time).length}
                             </button>
                         )}
                     </div>
-                    <button onClick={onClose} className="p-1 hover:bg-slate-700/30 rounded-md text-slate-500 transition-colors">
-                        <XIcon size={20} />
-                    </button>
+                    <button onClick={onClose} className="p-1 hover:bg-slate-700/30 rounded-md text-slate-500 transition-colors"><XIcon size={20} /></button>
                 </div>
 
-                <div className="p-4 bg-[#1a1f2e] grid grid-cols-3 md:grid-cols-4 gap-3 border-b border-slate-800/50">
-                    {/* Search - Full width on mobile, 1 col on desktop */}
-                    <div className="relative col-span-3 md:col-span-1">
-                        <SearchIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                        <input 
-                            type="text"
-                            placeholder="Tìm nhân viên..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2 bg-[#252d3d] border border-slate-700/50 rounded-xl text-sm text-slate-200 outline-none focus:ring-1 focus:ring-[var(--accent-color)]/30"
-                        />
+                <div className="min-h-[110px] md:min-h-0 flex-none p-4 bg-[#1a1f2e] flex flex-col gap-3 border-b border-slate-800/50 z-[100]">
+                    <div className="relative w-full">
+                        <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input type="text" placeholder="Tìm tên nhân viên..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full h-10 pl-9 pr-4 bg-[#252d3d] border border-slate-700/50 rounded-xl text-sm text-slate-200 outline-none focus:ring-1 focus:ring-[var(--accent-color)]/30 transition-all" />
                     </div>
 
-                    {/* Dropdowns - 3 cols on mobile (1 row), spread on desktop */}
-                    <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-xs sm:text-sm text-slate-200 rounded-xl px-2 sm:px-3 py-2 outline-none cursor-pointer font-light col-span-1">
-                        <option value="all">Nhân viên</option>
-                        {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.full_name}</option>)}
-                    </select>
+                    <div className="grid grid-cols-3 gap-2 overflow-visible">
+                        <CustomDropdown 
+                            options={employeeOptions} 
+                            selectedIds={selectedUserIds} 
+                            onToggle={(id) => setSelectedUserIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])} 
+                            placeholder="Nhân viên"
+                            isMulti={true}
+                            onSelectAll={() => setSelectedUserIds(selectedUserIds.length === employees.length ? [] : employees.map(e => e.id))}
+                            className="w-full"
+                            icon={<UsersIcon size={12} className="text-[var(--accent-color)]" />}
+                        />
 
-                    <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-xs sm:text-sm text-slate-200 rounded-xl px-2 sm:px-3 py-2 outline-none cursor-pointer font-light col-span-1">
-                        <option value="all">Trạng thái</option>
-                        <option value="active">Đang làm</option>
-                        <option value="finished">Đã xong</option>
-                    </select>
+                        <CustomDropdown 
+                            options={statusOptions} 
+                            selectedIds={selectedStatus.length ? selectedStatus : ['all']} 
+                            onToggle={(id) => setSelectedStatus([id])} 
+                            placeholder="Trạng thái"
+                            className="w-full"
+                            icon={<RadioIcon size={12} className="text-emerald-500" />}
+                        />
 
-                    <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-xs sm:text-sm text-slate-200 rounded-xl px-2 sm:px-3 py-2 outline-none cursor-pointer font-light col-span-1">
-                        <option value="24h">24h qua</option>
-                        <option value="7d">7 ngày</option>
-                        <option value="30d">30 ngày</option>
-                    </select>
+                        <CustomDropdown 
+                            options={rangeOptions} 
+                            selectedIds={timeRange} 
+                            onToggle={(id) => setTimeRange([id])} 
+                            placeholder="Thời gian"
+                            className="w-full"
+                            align="right"
+                            icon={<CalendarIcon size={12} className="text-sky-500" />}
+                        />
+                    </div>
                 </div>
 
-                <div className="px-4 py-4 overflow-y-auto custom-scrollbar space-y-3 bg-[#0f172a]/20 flex-grow">
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3 bg-[#0f172a]/20">
                     {loading ? (
-                        <div className="py-20 text-center text-slate-500 animate-pulse font-light italic">Đang đồng bộ...</div>
+                        <div className="py-20 text-center text-slate-500 animate-pulse font-light italic">Đang tải...</div>
                     ) : filteredShifts.length === 0 ? (
-                        <div className="py-20 text-center text-slate-500 font-light italic">Không tìm thấy dữ liệu.</div>
+                        <div className="py-20 text-center text-slate-500 font-light italic text-sm">Không có dữ liệu phù hợp.</div>
                     ) : (
                         filteredShifts.map(shift => {
                             const employee = employees.find(e => e.id === shift.user_id);
-                            const startDate = new Date(shift.start_time);
                             const isActive = !shift.end_time;
-                            
-                            const day = String(startDate.getDate()).padStart(2, '0');
-                            const month = String(startDate.getMonth() + 1).padStart(2, '0');
-                            const eventDate = `${day}/${month}`;
-                            
-                            const timeOptions: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
-                            const startTime = startDate.toLocaleTimeString('vi-VN', timeOptions);
-                            const endTime = shift.end_time ? new Date(shift.end_time).toLocaleTimeString('vi-VN', timeOptions) : '...';
+                            const eventDate = new Date(shift.start_time).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+                            const startTime = new Date(shift.start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
+                            const endTime = shift.end_time ? new Date(shift.end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : 'Live';
 
                             return (
-                                <div key={shift.id} className="p-3.5 bg-[#252d3d]/50 rounded-2xl border border-slate-700/20 hover:border-slate-600/40 transition-all group relative">
-                                    <div className="flex gap-4">
-                                        {/* Column 1: Avatar & Date (Vertical Stack) */}
-                                        <div className="flex flex-col items-center gap-2 min-w-[48px] shrink-0">
+                                <div key={shift.id} className="p-3 bg-[#252d3d]/50 rounded-2xl border border-slate-700/20 hover:border-slate-600/40 transition-all group relative">
+                                    <div className="flex gap-3 md:gap-4">
+                                        <div className="flex flex-col items-center gap-2 min-w-[40px] md:min-w-[48px]">
                                             <div className="relative">
-                                                {employee?.avatar_url ? (
-                                                    <img src={employee.avatar_url} className="w-10 h-10 rounded-full object-cover border border-slate-700/30" alt="" />
-                                                ) : (
-                                                    <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-medium text-slate-300">
-                                                        {(employee?.full_name || '?').charAt(0)}
-                                                    </div>
-                                                )}
-                                                {isActive && (
-                                                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-[#1a1f2e] rounded-full shadow-lg animate-pulse"></span>
-                                                )}
+                                                {employee?.avatar_url ? <img src={employee.avatar_url} className="w-9 h-9 md:w-10 md:h-10 rounded-full object-cover border border-slate-700/30" /> : <div className="w-9 h-9 md:w-10 md:h-10 rounded-full bg-slate-700 flex items-center justify-center text-[10px] text-slate-300">{(employee?.full_name || '?').charAt(0)}</div>}
+                                                {isActive && <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#1a1f2e] rounded-full animate-pulse" />}
                                             </div>
-                                            {/* UPDATED: Date display clearer (white text, slate-800 bg) */}
-                                            <div className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-200 whitespace-nowrap shadow-sm">
-                                                {eventDate}
-                                            </div>
+                                            <div className="px-1 py-0.5 rounded bg-slate-800 text-[9px] font-bold text-slate-200">{eventDate}</div>
                                         </div>
 
-                                        {/* Column 2: Main Info (Name, Time, Duration) */}
-                                        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
-                                            <div className="flex items-center justify-between">
-                                                <p className="font-medium text-slate-100 text-sm truncate pr-2">{employee?.full_name || 'Nhân viên'}</p>
-                                            </div>
-                                            
-                                            <div className="flex items-center gap-2 text-xs">
-                                                <span className="text-[var(--accent-color)] font-mono tracking-tight">{startTime}</span>
+                                        <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 md:gap-1">
+                                            <p className="font-medium text-slate-100 text-xs md:text-sm truncate">{employee?.full_name}</p>
+                                            <div className="flex items-center gap-2 text-[10px] md:text-xs font-mono">
+                                                <span className="text-[var(--accent-color)]">{startTime}</span>
                                                 <span className="text-slate-500">-</span>
-                                                <span className={`font-mono tracking-tight ${isActive ? 'text-emerald-400 font-bold animate-pulse' : 'text-slate-300'}`}>
-                                                    {isActive ? 'Live' : endTime}
-                                                </span>
+                                                <span className={isActive ? 'text-emerald-400 font-bold' : 'text-slate-300'}>{endTime}</span>
                                             </div>
-
-                                            <div className="flex items-center gap-1.5 mt-0.5">
-                                                {/* UPDATED: Duration badge color to Orange for finished state too */}
-                                                <ClockIcon size={12} className={isActive ? "text-amber-500" : "text-orange-400"} />
-                                                <div className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isActive ? 'text-amber-400 bg-amber-500/10' : 'text-orange-300 bg-orange-500/10 border border-orange-500/20'}`}>
+                                            <div className="flex items-center gap-1.5">
+                                                <ClockIcon size={10} className="text-orange-400" />
+                                                <div className="text-[9px] md:text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-300">
                                                     {isActive ? <ActiveTimer startISO={shift.start_time} /> : formatPreciseDuration(shift.start_time, shift.end_time!)}
                                                 </div>
                                             </div>
                                         </div>
                                         
-                                        {/* Column 3: Revenue & Actions (Vertical Align) */}
-                                        <div className="flex flex-col items-end justify-between gap-2 pl-3 border-l border-slate-700/30 min-w-[70px]">
-                                            <div className="text-emerald-400 font-medium text-sm sm:text-base whitespace-nowrap">
-                                                {shift.revenue?.toLocaleString()}₫
-                                            </div>
-
+                                        <div className="flex flex-col items-end justify-between border-l border-slate-700/30 pl-3">
+                                            <div className="text-emerald-400 font-bold text-xs md:text-sm">₫{shift.revenue?.toLocaleString()}</div>
                                             <div className="flex items-center gap-1 mt-auto">
-                                                {isActive && (
-                                                    <button 
-                                                        onClick={(e) => promptForceEndShift(e, shift.id)}
-                                                        className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg transition-all"
-                                                        title="Kết thúc"
-                                                    >
-                                                        <StopIcon size={12} />
-                                                    </button>
-                                                )}
-                                                
-                                                <button 
-                                                    onClick={() => handleEditClick(shift)}
-                                                    className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-sky-400 transition-all"
-                                                    title="Sửa"
-                                                >
-                                                    <EditIcon size={12} />
-                                                </button>
-                                                
-                                                <button 
-                                                    onClick={() => promptDeleteShift(shift.id)}
-                                                    className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-red-400 transition-all"
-                                                    title="Xóa"
-                                                >
-                                                    <TrashIcon size={12} />
-                                                </button>
+                                                {isActive && <button onClick={(e) => { e.stopPropagation(); setConfirmState({ isOpen: true, type: 'force_end', id: shift.id, title: 'Kết thúc', message: 'Kết thúc ca này?', confirmText: 'Kết thúc', confirmType: 'warning' }); }} className="p-1.5 bg-rose-500/10 text-rose-500 rounded-lg transition-colors hover:bg-rose-500/20"><StopIcon size={12} /></button>}
+                                                <button onClick={() => handleEditClick(shift)} className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 transition-colors"><EditIcon size={12} /></button>
+                                                <button onClick={() => setConfirmState({ isOpen: true, type: 'delete', id: shift.id, title: 'Xóa', message: 'Xóa vĩnh viễn?', confirmText: 'Xóa', confirmType: 'danger' })} className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 transition-colors"><TrashIcon size={12} /></button>
                                             </div>
                                         </div>
                                     </div>
@@ -399,24 +304,8 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                 </div>
             </div>
 
-            {isEditModalOpen && (
-                <TimeEntryModal 
-                    isOpen={isEditModalOpen}
-                    onClose={() => setIsEditModalOpen(false)}
-                    onSave={handleSaveEdit}
-                    entry={editingEntry}
-                />
-            )}
-
-            <ConfirmModal 
-                isOpen={confirmState.isOpen}
-                onClose={() => setConfirmState(prev => ({ ...prev, isOpen: false }))}
-                onConfirm={handleConfirmAction}
-                title={confirmState.title}
-                message={confirmState.message}
-                confirmText={confirmState.confirmText}
-                type={confirmState.confirmType}
-            />
+            {isEditModalOpen && <TimeEntryModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} onSave={handleSaveEdit} entry={editingEntry} />}
+            <ConfirmModal isOpen={confirmState.isOpen} onClose={() => setConfirmState(p => ({...p, isOpen: false}))} onConfirm={handleConfirmAction} title={confirmState.title} message={confirmState.message} confirmText={confirmState.confirmText} type={confirmState.confirmType} />
         </div>
     );
 };

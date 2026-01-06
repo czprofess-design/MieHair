@@ -61,7 +61,7 @@ const UserMenu: React.FC<{ session: Session; profile: Profile | null; onAccountC
 
 const Header: React.FC<HeaderProps> = ({ session, profile, handleSignOut, onSignInClick, onAccountClick, onTodaysShiftsClick, isAdminView, setIsAdminView, activeShift, onStartShift, onEndShift, dataVersion }) => {
   return (
-    <header className="sticky top-0 z-40 bg-white/70 dark:bg-gray-900/70 backdrop-blur-lg shadow-sm flex flex-col">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-white/70 dark:bg-gray-900/70 backdrop-blur-lg shadow-sm flex flex-col transition-colors duration-300">
       <TopBar session={session} activeShift={activeShift} onStartShift={onStartShift} onEndShift={onEndShift} dataVersion={dataVersion} />
       <div className="container mx-auto px-4 py-2 md:py-0 md:h-16 flex flex-wrap items-center">
         <div className="w-full md:flex-1 flex justify-center order-1 md:order-2 mb-2 md:mb-0">

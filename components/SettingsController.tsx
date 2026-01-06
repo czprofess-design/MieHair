@@ -24,7 +24,7 @@ const SettingsController: React.FC = () => {
         <div className="absolute right-0 mt-2 w-56 bg-white/80 dark:bg-gray-800/80 backdrop-blur-lg rounded-xl shadow-2xl ring-1 ring-black/5 z-50 animate-fadeIn">
           <div className="p-3 space-y-4">
             <div className="space-y-3">
-              <h3 className="px-1 text-xs font-bold uppercase text-gray-500 dark:text-gray-400 tracking-wider">Giao diện</h3>
+              <h3 className="px-1 text-xs font-semibold capitalize text-gray-500 dark:text-gray-400">Giao diện</h3>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-2 px-1">Chế độ</label>
                 <div className="grid grid-cols-2 gap-2 text-sm">

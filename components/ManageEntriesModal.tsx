@@ -158,7 +158,7 @@ const ManageEntriesModal: React.FC<ManageEntriesModalProps> = ({ isOpen, onClose
 
                 <div className="overflow-y-auto p-6 custom-scrollbar font-light">
                     <div>
-                        <h3 className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-3">Tra cứu theo ngày</h3>
+                        <h3 className="text-xs font-semibold text-gray-500 capitalize mb-3">Tra cứu theo ngày</h3>
                         <div className="relative">
                             <input 
                                 type="date" 
@@ -180,7 +180,7 @@ const ManageEntriesModal: React.FC<ManageEntriesModalProps> = ({ isOpen, onClose
 
                     <div className="border-t border-gray-100 dark:border-gray-700/50 my-6"></div>
 
-                    <h3 className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-4">Hoạt động gần đây</h3>
+                    <h3 className="text-xs font-semibold text-gray-500 capitalize mb-4">Hoạt động gần đây</h3>
                     {recentLoading ? (
                         <div className="flex justify-center p-8"><SpinnerIcon size={20} className="animate-spin text-[var(--accent-color)]"/></div>
                     ) : recentEntries.length > 0 ? (

@@ -1,20 +1,19 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { UsersIcon, ClockIcon } from './Icons';
+import React, { useState, useEffect, useCallback } from 'react';
+import { UsersIcon, DollarSignIcon } from './Icons';
 import { useSettings } from '../context/SettingsContext';
 import { supabase } from '../lib/supabase';
 import type { Session } from '@supabase/supabase-js';
+import type { TimeEntry } from '../types';
 
 interface AnimatedNumberProps {
   value: number;
-  isDecimal?: boolean;
 }
 
-const AnimatedNumber: React.FC<AnimatedNumberProps> = ({ value, isDecimal = false }) => {
-  const formattedValue = isDecimal ? value.toFixed(1) : value.toLocaleString();
+const AnimatedNumber: React.FC<AnimatedNumberProps> = ({ value }) => {
   return (
     <span key={value} className="animate-numberFlip inline-block">
-      {formattedValue}
+      {value.toLocaleString('vi-VN')}
     </span>
   );
 };
@@ -22,12 +21,13 @@ const AnimatedNumber: React.FC<AnimatedNumberProps> = ({ value, isDecimal = fals
 interface ActivityTickerProps {
     session: Session | null;
     dataVersion: number;
+    activeShift?: TimeEntry | null;
 }
 
-const ActivityTicker: React.FC<ActivityTickerProps> = ({ session, dataVersion }) => {
+const ActivityTicker: React.FC<ActivityTickerProps> = ({ session, dataVersion, activeShift }) => {
   const { t } = useSettings();
   const [activeEmployees, setActiveEmployees] = useState(0);
-  const [userMonthlyHours, setUserMonthlyHours] = useState(0);
+  const [userMonthlyRevenue, setUserMonthlyRevenue] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchTickerData = useCallback(async () => {
@@ -41,31 +41,23 @@ const ActivityTicker: React.FC<ActivityTickerProps> = ({ session, dataVersion })
         setActiveEmployees(activeCount || 0);
     }
     
-    // 2. Get current user's monthly hours
+    // 2. Get current user's monthly revenue
     if (session) {
         const now = new Date();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         
         const { data: userEntries, error: userEntriesError } = await supabase
             .from('time_entries')
-            .select('start_time, end_time')
+            .select('revenue')
             .eq('user_id', session.user.id)
             .gte('start_time', startOfMonth.toISOString());
             
         if (!userEntriesError) {
-            const totalMs = userEntries.reduce((acc, entry) => {
-                // For active shifts, calculate duration up to now
-                const end = entry.end_time ? new Date(entry.end_time) : new Date();
-                const start = new Date(entry.start_time);
-                if (end > start) {
-                    return acc + (end.getTime() - start.getTime());
-                }
-                return acc;
-            }, 0);
-            setUserMonthlyHours(totalMs / (1000 * 60 * 60));
+            const totalRev = userEntries.reduce((acc, entry) => acc + (entry.revenue || 0), 0);
+            setUserMonthlyRevenue(totalRev);
         }
     } else {
-        setUserMonthlyHours(0);
+        setUserMonthlyRevenue(0);
     }
 
     if (isLoading) {
@@ -80,37 +72,32 @@ const ActivityTicker: React.FC<ActivityTickerProps> = ({ session, dataVersion })
   }, [fetchTickerData, dataVersion]);
 
   if (isLoading) {
-    return <div className="text-xs animate-pulse font-light">...</div>;
+    return <div className="text-xs animate-pulse font-mono text-gray-400">...</div>;
   }
 
   return (
-    <div className="flex flex-wrap justify-center items-center gap-x-3 md:gap-x-4 gap-y-1 text-xs">
-      <div className="flex items-center gap-x-2">
-        {activeEmployees > 0 ? (
-           <span className="relative flex h-1.5 w-1.5" title={t.liveActivityOnShift}>
-             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500"></span>
-           </span>
-        ) : (
-            <span className="relative flex h-1.5 w-1.5" title={t.liveActivityIdle}>
-             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
-           </span>
-        )}
-        <span className="font-medium text-gray-500 hidden sm:inline">{activeEmployees > 0 ? 'Trong ca' : 'Nghỉ'}</span>
-      </div>
+    <div className="flex items-center space-x-4 text-xs">
+      {/* User Status Indicator */}
+      {session && (
+          <div className="flex items-center space-x-1.5 animate-fadeIn">
+            <span className={`w-2 h-2 rounded-full ${activeShift ? 'bg-orange-500 animate-pulse' : 'bg-slate-400'}`}></span>
+            <span className={`font-medium ${activeShift ? 'text-orange-500' : 'text-slate-500'}`}>
+                {activeShift ? t.liveActivityOnShift : t.liveActivityIdle}
+            </span>
+          </div>
+      )}
 
-      <div className="flex items-center gap-x-1.5" title={t.activeSubs}>
-        <UsersIcon size={14} className="text-[var(--accent-color)] opacity-70" />
-        <span className="font-bold text-gray-700 dark:text-gray-300"><AnimatedNumber value={activeEmployees} /></span>
-        <span className="hidden lg:inline text-gray-500 font-light">nhân viên</span>
+      <div className="hidden sm:flex items-center space-x-1.5" title={t.activeSubs}>
+        <UsersIcon size={16} className="text-sky-500" />
+        <span className="hidden lg:inline whitespace-nowrap font-medium text-gray-500 dark:text-gray-400">Nhân sự:</span>
+        <span className="font-mono font-bold text-gray-700 dark:text-gray-200"><AnimatedNumber value={activeEmployees} /></span>
       </div>
       
       {session && (
-          <div className="flex items-center gap-x-1.5" title={t.userMonthlyHours}>
-            <ClockIcon size={14} className="text-green-500 opacity-70" />
-            <span className="hidden lg:inline text-gray-500 font-light">Tháng này:</span>
-            <span className="font-bold text-gray-700 dark:text-gray-300"><AnimatedNumber value={userMonthlyHours} isDecimal />h</span>
+          <div className="hidden sm:flex items-center space-x-1.5" title={t.revenue}>
+            <DollarSignIcon size={16} className="text-emerald-500" />
+            <span className="hidden lg:inline whitespace-nowrap font-medium text-gray-500 dark:text-gray-400">Doanh thu:</span>
+            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400"><AnimatedNumber value={userMonthlyRevenue} /> đ</span>
           </div>
       )}
     </div>
