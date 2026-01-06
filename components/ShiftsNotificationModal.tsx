@@ -3,7 +3,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../context/SettingsContext';
 import type { Profile, TimeEntry } from '../types';
-import { XIcon, SearchIcon, DollarSignIcon, StopIcon } from './Icons';
+import { XIcon, SearchIcon, StopIcon, EditIcon, TrashIcon, CheckIcon } from './Icons';
+import TimeEntryModal from './TimeEntryModal';
 
 interface ShiftsNotificationModalProps {
     isOpen: boolean;
@@ -57,6 +58,10 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
     const [selectedStatus, setSelectedStatus] = useState('all');
     const [timeRange, setTimeRange] = useState('7d');
 
+    // Edit State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
+
     const fetchShifts = useCallback(async () => {
         setLoading(true);
         const now = new Date();
@@ -80,9 +85,11 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
         if (isOpen) fetchShifts();
     }, [isOpen, fetchShifts]);
 
+    // --- ACTIONS ---
+
     const handleForceEndShift = async (e: React.MouseEvent, shiftId: number) => {
         e.preventDefault();
-        e.stopPropagation(); // Ngăn sự kiện click lan ra ngoài làm đóng modal
+        e.stopPropagation();
         
         if (!window.confirm("Xác nhận kết thúc ca làm này cho nhân viên?")) return;
         
@@ -91,12 +98,68 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
             .update({ end_time: new Date().toISOString() })
             .eq('id', shiftId);
         
+        if (error) alert("Lỗi: " + error.message);
+        else fetchShifts();
+    };
+
+    const handleDeleteShift = async (shiftId: number) => {
+        if (!window.confirm("Bạn có chắc chắn muốn xóa vĩnh viễn ca làm việc này không? Hành động này không thể hoàn tác.")) return;
+
+        const { error } = await supabase
+            .from('time_entries')
+            .delete()
+            .eq('id', shiftId);
+
+        if (error) alert("Lỗi khi xóa: " + error.message);
+        else fetchShifts();
+    };
+
+    const handleEditClick = (shift: TimeEntry) => {
+        setEditingEntry(shift);
+        setIsEditModalOpen(true);
+    };
+
+    const handleSaveEdit = async (updatedEntry: Partial<TimeEntry>) => {
+        if (!editingEntry) return;
+        
+        const { error } = await supabase
+            .from('time_entries')
+            .update({
+                start_time: updatedEntry.start_time,
+                end_time: updatedEntry.end_time,
+                revenue: updatedEntry.revenue
+            })
+            .eq('id', editingEntry.id);
+
         if (error) {
-            alert("Lỗi: " + error.message);
+            console.error("Error updating entry:", error);
+            alert("Không thể cập nhật ca làm việc.");
         } else {
+            setIsEditModalOpen(false);
+            setEditingEntry(null);
             fetchShifts();
         }
     };
+
+    const handleBatchStop = async () => {
+        const activeShifts = shifts.filter(s => !s.end_time);
+        if (activeShifts.length === 0) return;
+
+        if (!window.confirm(`Bạn có chắc muốn kết thúc ${activeShifts.length} ca đang hoạt động ngay lập tức?`)) return;
+
+        const ids = activeShifts.map(s => s.id);
+        const now = new Date().toISOString();
+
+        const { error } = await supabase
+            .from('time_entries')
+            .update({ end_time: now })
+            .in('id', ids);
+
+        if (error) alert("Lỗi khi dừng hàng loạt: " + error.message);
+        else fetchShifts();
+    };
+
+    // --- FILTERING ---
 
     const filteredShifts = useMemo(() => {
         return shifts.filter(shift => {
@@ -111,18 +174,31 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
         });
     }, [shifts, searchQuery, selectedUser, selectedStatus, employees]);
 
+    const activeShiftCount = shifts.filter(s => !s.end_time).length;
+
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" onClick={onClose}>
             <div 
-                className="bg-[#1a1f2e] w-full max-w-4xl rounded-3xl shadow-2xl border border-slate-800/50 overflow-hidden flex flex-col"
+                className="bg-[#1a1f2e] w-full max-w-5xl rounded-3xl shadow-2xl border border-slate-800/50 overflow-hidden flex flex-col max-h-[90vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="p-5 flex justify-between items-center bg-[#1a1f2e] border-b border-slate-800/50">
-                    <h2 className="text-lg font-medium text-slate-100 tracking-wide">
-                        Nhật ký hoạt động hệ thống
-                    </h2>
+                    <div className="flex items-center gap-3">
+                        <h2 className="text-lg font-medium text-slate-100 tracking-wide">
+                            Nhật ký hoạt động hệ thống
+                        </h2>
+                        {activeShiftCount > 0 && (
+                            <button 
+                                onClick={handleBatchStop}
+                                className="flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-[10px] font-bold uppercase tracking-wide rounded-full transition-all animate-pulse"
+                            >
+                                <StopIcon size={10} />
+                                Dừng tất cả ({activeShiftCount})
+                            </button>
+                        )}
+                    </div>
                     <button onClick={onClose} className="p-1 hover:bg-slate-700/30 rounded-md text-slate-500 transition-colors">
                         <XIcon size={20} />
                     </button>
@@ -158,7 +234,7 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                     </select>
                 </div>
 
-                <div className="px-4 py-4 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-3 bg-[#0f172a]/20">
+                <div className="px-4 py-4 overflow-y-auto custom-scrollbar space-y-3 bg-[#0f172a]/20 flex-grow">
                     {loading ? (
                         <div className="py-20 text-center text-slate-500 animate-pulse font-light italic">Đang đồng bộ...</div>
                     ) : filteredShifts.length === 0 ? (
@@ -197,42 +273,56 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                                             )}
                                         </div>
                                         
-                                        <div className="space-y-0.5">
-                                            <p className="font-medium text-slate-100 text-sm">{employee?.full_name || 'Nhân viên'}</p>
+                                        <div className="space-y-0.5 min-w-0">
+                                            <p className="font-medium text-slate-100 text-sm truncate">{employee?.full_name || 'Nhân viên'}</p>
                                             <div className="flex items-center gap-2 text-[10px] font-light">
-                                                <span className="text-slate-400">Bắt đầu: {startTime}</span>
-                                                {endTime ? (
-                                                    <span className="text-slate-400">Kết thúc: {endTime}</span>
+                                                {isActive ? (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-emerald-400 font-medium">Đang làm việc</span>
+                                                        <span className="text-slate-600">|</span>
+                                                        <ActiveTimer startISO={shift.start_time} />
+                                                    </div>
                                                 ) : (
-                                                    <span className="text-emerald-400 font-medium">Đang làm việc</span>
+                                                    <span className="text-slate-400">Kết thúc: {endTime} <span className="text-slate-600 mx-1">•</span> Thời lượng: {formatPreciseDuration(shift.start_time, shift.end_time!)}</span>
                                                 )}
                                             </div>
                                         </div>
                                     </div>
                                     
-                                    <div className="text-right flex flex-col justify-between items-end h-12">
-                                        <div className="flex items-center gap-1 text-emerald-400 font-medium">
-                                            <p className="text-base">
-                                                {shift.revenue?.toLocaleString()}₫
-                                            </p>
+                                    <div className="flex items-center gap-4">
+                                        <div className="text-right">
+                                            <div className="flex items-center justify-end gap-1 text-emerald-400 font-medium">
+                                                <p className="text-base">{shift.revenue?.toLocaleString()}₫</p>
+                                            </div>
                                         </div>
-                                        
-                                        {isActive ? (
-                                            <div className="flex items-center gap-3">
-                                                <ActiveTimer startISO={shift.start_time} />
+
+                                        <div className="flex items-center gap-2 pl-4 border-l border-slate-700/50">
+                                            {isActive && (
                                                 <button 
                                                     onClick={(e) => handleForceEndShift(e, shift.id)}
-                                                    className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-red-500/80 to-orange-600/80 hover:from-red-500 hover:to-orange-600 text-white text-[10px] font-medium rounded-lg shadow-sm transition-all active:scale-95 z-20"
+                                                    className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg transition-all"
+                                                    title="Kết thúc ca"
                                                 >
-                                                    <StopIcon size={10} />
-                                                    Kết thúc
+                                                    <StopIcon size={14} />
                                                 </button>
-                                            </div>
-                                        ) : (
-                                            <div className="text-[10px] font-light text-slate-500 flex items-center gap-1.5 italic">
-                                                <span>Thời lượng: {formatPreciseDuration(shift.start_time, shift.end_time!)}</span>
-                                            </div>
-                                        )}
+                                            )}
+                                            
+                                            <button 
+                                                onClick={() => handleEditClick(shift)}
+                                                className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-sky-400 transition-all"
+                                                title="Sửa ca"
+                                            >
+                                                <EditIcon size={14} />
+                                            </button>
+                                            
+                                            <button 
+                                                onClick={() => handleDeleteShift(shift.id)}
+                                                className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-red-400 transition-all"
+                                                title="Xóa ca"
+                                            >
+                                                <TrashIcon size={14} />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             );
@@ -240,6 +330,15 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                     )}
                 </div>
             </div>
+
+            {isEditModalOpen && (
+                <TimeEntryModal 
+                    isOpen={isEditModalOpen}
+                    onClose={() => setIsEditModalOpen(false)}
+                    onSave={handleSaveEdit}
+                    entry={editingEntry}
+                />
+            )}
         </div>
     );
 };
