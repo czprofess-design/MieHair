@@ -17,12 +17,14 @@ import { supabase, isSupabaseConfigured } from './lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import type { Profile, TimeEntry, DailyNote } from './types';
 import { SettingsContext, SettingsContextType } from './context/SettingsContext';
-// Import the translation object to be provided via context
+import { ToastProvider, useToast } from './context/ToastContext'; // Import ToastProvider
 import { t as translations } from './translations';
 
-const AppContainer: React.FC<{ session: Session | null }> = ({ session }) => {
+// Extract logic to inner component to use Toast hook
+const MainApp: React.FC<{ session: Session | null }> = ({ session }) => {
   const [theme, setTheme] = useLocalStorage<'light' | 'dark'>('theme', 'dark');
   const [colorScheme, setColorScheme] = useLocalStorage<'rose' | 'blue'>('colorScheme', 'rose');
+  const toast = useToast();
   
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -67,16 +69,48 @@ const AppContainer: React.FC<{ session: Session | null }> = ({ session }) => {
     if (data) setEmployees(data);
   }, []);
 
+  // REALTIME SUBSCRIPTION
+  // This replaces the polling interval with instant updates via WebSockets
   useEffect(() => {
+    // Initial fetch
     fetchActiveShift(session?.user ?? null);
     if (session) fetchEmployees();
-  }, [session, fetchActiveShift, fetchEmployees, dataVersion]);
+
+    if (!session) return;
+
+    const channel = supabase
+      .channel('public:time_entries')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'time_entries',
+        },
+        (payload) => {
+          // console.log('Realtime change received:', payload);
+          // 1. Refresh active shift for the current user (in case Admin forced end)
+          fetchActiveShift(session.user);
+          // 2. Trigger global data refresh for dashboards/modals
+          refreshData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session, fetchActiveShift, fetchEmployees, refreshData]);
 
   const handleStartShift = async () => {
     if (!session) return;
     const { error } = await supabase.from('time_entries').insert({ user_id: session.user.id, start_time: new Date().toISOString(), revenue: 0 });
-    if (error) console.error("Error starting shift:", error);
-    else refreshData();
+    if (error) {
+        toast.error("Lỗi khi bắt đầu ca: " + error.message);
+    } else {
+        // Removed success toast as requested
+        refreshData();
+    }
   };
 
   const handleEndShiftRequest = () => {
@@ -134,8 +168,10 @@ const AppContainer: React.FC<{ session: Session | null }> = ({ session }) => {
           ? await supabase.from('time_entries').update({ ...entry, user_id }).eq('id', (entry as TimeEntry).id)
           : await supabase.from('time_entries').insert({ ...entry, user_id });
       
-      if (error) console.error("Error saving entry:", error);
-      else {
+      if (error) {
+          toast.error("Lỗi khi lưu: " + error.message);
+      } else {
+          // Removed success toast as requested
           refreshData();
           setIsTimeEntryModalOpen(false);
           setEditingEntry(null);
@@ -172,6 +208,7 @@ const AppContainer: React.FC<{ session: Session | null }> = ({ session }) => {
               file_url = urlData.publicUrl;
           }
           await supabase.from('daily_notes').upsert({ user_id: noteOwnerId, date: ymdFormatter.format(selectedDateForNote), note: noteText, file_url }, { onConflict: 'user_id, date' });
+          // Removed success toast
           refreshData();
           handleCloseNoteModal();
       } catch(error: any) { setNoteModalError(error.message); } finally { setIsSavingNote(false); }
@@ -182,12 +219,12 @@ const AppContainer: React.FC<{ session: Session | null }> = ({ session }) => {
       setIsSavingNote(true);
       try {
           await supabase.from('daily_notes').delete().eq('id', activeNote.id);
+          // Removed success toast
           refreshData();
           handleCloseNoteModal();
       } catch(error: any) { setNoteModalError(error.message); } finally { setIsSavingNote(false); }
   }, [noteOwnerId, activeNote, refreshData, handleCloseNoteModal]);
 
-  // Providing 'vi' as the default language and 'translations' as the t object.
   const language = 'vi';
   const settingsContextValue: SettingsContextType = { 
     theme, 
@@ -220,7 +257,7 @@ const AppContainer: React.FC<{ session: Session | null }> = ({ session }) => {
         <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
         <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} session={session} />
         <UserGuideModal isOpen={isUserGuideOpen} onClose={() => setIsUserGuideOpen(false)} />
-        {isTodaysShiftsOpen && <ShiftsNotificationModal isOpen={isTodaysShiftsOpen} onClose={() => setIsTodaysShiftsOpen(false)} employees={employees} />}
+        {isTodaysShiftsOpen && <ShiftsNotificationModal isOpen={isTodaysShiftsOpen} onClose={() => setIsTodaysShiftsOpen(false)} employees={employees} dataVersion={dataVersion} />}
         {isTimeEntryModalOpen && <TimeEntryModal isOpen={isTimeEntryModalOpen} onClose={() => setIsTimeEntryModalOpen(false)} onSave={handleSaveEntry} entry={editingEntry as TimeEntry | null} />}
         {isNoteModalOpen && selectedDateForNote && (
           <DailyNoteModal isOpen={isNoteModalOpen} onClose={handleCloseNoteModal} onSave={handleSaveNote} onDelete={handleDeleteNote} note={activeNote} date={selectedDateForNote} isSaving={isSavingNote} error={noteModalError} readOnly={isNoteReadOnly} />
@@ -240,5 +277,10 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
     return () => subscription.unsubscribe();
   }, []);
-  return <AppContainer session={session} />;
+  
+  return (
+    <ToastProvider>
+      <MainApp session={session} />
+    </ToastProvider>
+  );
 }

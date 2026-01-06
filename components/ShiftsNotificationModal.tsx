@@ -3,13 +3,16 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../context/SettingsContext';
 import type { Profile, TimeEntry } from '../types';
-import { XIcon, SearchIcon, StopIcon, EditIcon, TrashIcon, CheckIcon } from './Icons';
+import { XIcon, SearchIcon, StopIcon, EditIcon, TrashIcon, ClockIcon } from './Icons';
 import TimeEntryModal from './TimeEntryModal';
+import ConfirmModal from './ConfirmModal';
+import { useToast } from '../context/ToastContext';
 
 interface ShiftsNotificationModalProps {
     isOpen: boolean;
     onClose: () => void;
     employees: Profile[];
+    dataVersion?: number; // Add prop to listen for global updates
 }
 
 const formatPreciseDuration = (startISO: string, endISO: string) => {
@@ -45,11 +48,12 @@ const ActiveTimer: React.FC<{ startISO: string }> = ({ startISO }) => {
         return () => clearInterval(timer);
     }, [startISO]);
 
-    return <span className="text-amber-500 font-mono text-[10px] font-medium tracking-wider">{elapsed}</span>;
+    return <span>{elapsed}</span>;
 };
 
-const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpen, onClose, employees }) => {
+const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpen, onClose, employees, dataVersion = 0 }) => {
     const { t } = useSettings();
+    const toast = useToast();
     const [shifts, setShifts] = useState<TimeEntry[]>([]);
     const [loading, setLoading] = useState(false);
     
@@ -61,6 +65,24 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
     // Edit State
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
+
+    // Confirmation State
+    const [confirmState, setConfirmState] = useState<{
+        isOpen: boolean;
+        type: 'delete' | 'force_end' | 'batch_stop';
+        id?: number;
+        title: string;
+        message: string;
+        confirmText: string;
+        confirmType: 'danger' | 'warning';
+    }>({
+        isOpen: false,
+        type: 'delete',
+        title: '',
+        message: '',
+        confirmText: '',
+        confirmType: 'danger'
+    });
 
     const fetchShifts = useCallback(async () => {
         setLoading(true);
@@ -81,37 +103,89 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
         setLoading(false);
     }, [timeRange]);
 
+    // Refetch when isOpen is true OR when dataVersion changes (Realtime update)
     useEffect(() => {
         if (isOpen) fetchShifts();
-    }, [isOpen, fetchShifts]);
+    }, [isOpen, fetchShifts, dataVersion]);
 
-    // --- ACTIONS ---
+    // --- ACTIONS SETUP ---
 
-    const handleForceEndShift = async (e: React.MouseEvent, shiftId: number) => {
+    const promptForceEndShift = (e: React.MouseEvent, shiftId: number) => {
         e.preventDefault();
         e.stopPropagation();
-        
-        if (!window.confirm("Xác nhận kết thúc ca làm này cho nhân viên?")) return;
-        
-        const { error } = await supabase
-            .from('time_entries')
-            .update({ end_time: new Date().toISOString() })
-            .eq('id', shiftId);
-        
-        if (error) alert("Lỗi: " + error.message);
-        else fetchShifts();
+        setConfirmState({
+            isOpen: true,
+            type: 'force_end',
+            id: shiftId,
+            title: 'Kết thúc ca làm việc',
+            message: 'Bạn có chắc muốn kết thúc ca làm việc này ngay bây giờ? Thời gian kết thúc sẽ được đặt là hiện tại.',
+            confirmText: 'Kết thúc ngay',
+            confirmType: 'warning'
+        });
     };
 
-    const handleDeleteShift = async (shiftId: number) => {
-        if (!window.confirm("Bạn có chắc chắn muốn xóa vĩnh viễn ca làm việc này không? Hành động này không thể hoàn tác.")) return;
+    const promptDeleteShift = (shiftId: number) => {
+        setConfirmState({
+            isOpen: true,
+            type: 'delete',
+            id: shiftId,
+            title: 'Xác nhận xóa',
+            message: 'Bạn có chắc chắn muốn xóa vĩnh viễn ca làm việc này không? Hành động này không thể hoàn tác.',
+            confirmText: 'Xóa vĩnh viễn',
+            confirmType: 'danger'
+        });
+    };
 
-        const { error } = await supabase
-            .from('time_entries')
-            .delete()
-            .eq('id', shiftId);
+    const promptBatchStop = () => {
+        const activeShiftsCount = shifts.filter(s => !s.end_time).length;
+        if (activeShiftsCount === 0) return;
 
-        if (error) alert("Lỗi khi xóa: " + error.message);
-        else fetchShifts();
+        setConfirmState({
+            isOpen: true,
+            type: 'batch_stop',
+            title: 'Dừng tất cả ca',
+            message: `Bạn có chắc muốn kết thúc ${activeShiftsCount} ca đang hoạt động ngay lập tức?`,
+            confirmText: 'Dừng tất cả',
+            confirmType: 'danger'
+        });
+    };
+
+    // --- ACTIONS EXECUTION ---
+
+    const handleConfirmAction = async () => {
+        if (confirmState.type === 'force_end' && confirmState.id) {
+            const { error } = await supabase
+                .from('time_entries')
+                .update({ end_time: new Date().toISOString() })
+                .eq('id', confirmState.id);
+            if (error) console.error("Lỗi: " + error.message);
+            else {
+                fetchShifts();
+            }
+        } 
+        else if (confirmState.type === 'delete' && confirmState.id) {
+            const { error } = await supabase
+                .from('time_entries')
+                .delete()
+                .eq('id', confirmState.id);
+            if (error) console.error("Lỗi khi xóa: " + error.message);
+            else {
+                fetchShifts();
+            }
+        }
+        else if (confirmState.type === 'batch_stop') {
+            const activeShifts = shifts.filter(s => !s.end_time);
+            const ids = activeShifts.map(s => s.id);
+            const now = new Date().toISOString();
+            const { error } = await supabase
+                .from('time_entries')
+                .update({ end_time: now })
+                .in('id', ids);
+            if (error) console.error("Lỗi khi dừng hàng loạt: " + error.message);
+            else {
+                fetchShifts();
+            }
+        }
     };
 
     const handleEditClick = (shift: TimeEntry) => {
@@ -133,30 +207,11 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
 
         if (error) {
             console.error("Error updating entry:", error);
-            alert("Không thể cập nhật ca làm việc.");
         } else {
             setIsEditModalOpen(false);
             setEditingEntry(null);
             fetchShifts();
         }
-    };
-
-    const handleBatchStop = async () => {
-        const activeShifts = shifts.filter(s => !s.end_time);
-        if (activeShifts.length === 0) return;
-
-        if (!window.confirm(`Bạn có chắc muốn kết thúc ${activeShifts.length} ca đang hoạt động ngay lập tức?`)) return;
-
-        const ids = activeShifts.map(s => s.id);
-        const now = new Date().toISOString();
-
-        const { error } = await supabase
-            .from('time_entries')
-            .update({ end_time: now })
-            .in('id', ids);
-
-        if (error) alert("Lỗi khi dừng hàng loạt: " + error.message);
-        else fetchShifts();
     };
 
     // --- FILTERING ---
@@ -187,15 +242,16 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                 <div className="p-5 flex justify-between items-center bg-[#1a1f2e] border-b border-slate-800/50">
                     <div className="flex items-center gap-3">
                         <h2 className="text-lg font-medium text-slate-100 tracking-wide">
-                            Nhật ký hoạt động hệ thống
+                            Nhật ký hoạt động
                         </h2>
                         {activeShiftCount > 0 && (
                             <button 
-                                onClick={handleBatchStop}
+                                onClick={promptBatchStop}
                                 className="flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-[10px] font-bold uppercase tracking-wide rounded-full transition-all animate-pulse"
                             >
                                 <StopIcon size={10} />
-                                Dừng tất cả ({activeShiftCount})
+                                <span className="hidden sm:inline">Dừng tất cả ({activeShiftCount})</span>
+                                <span className="sm:hidden">Dừng ({activeShiftCount})</span>
                             </button>
                         )}
                     </div>
@@ -204,8 +260,9 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                     </button>
                 </div>
 
-                <div className="p-4 bg-[#1a1f2e] grid grid-cols-1 md:grid-cols-4 gap-3 border-b border-slate-800/50">
-                    <div className="relative md:col-span-1">
+                <div className="p-4 bg-[#1a1f2e] grid grid-cols-3 md:grid-cols-4 gap-3 border-b border-slate-800/50">
+                    {/* Search - Full width on mobile, 1 col on desktop */}
+                    <div className="relative col-span-3 md:col-span-1">
                         <SearchIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                         <input 
                             type="text"
@@ -216,21 +273,22 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                         />
                     </div>
 
-                    <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-sm text-slate-200 rounded-xl px-3 py-2 outline-none cursor-pointer font-light">
-                        <option value="all">Tất cả nhân viên</option>
+                    {/* Dropdowns - 3 cols on mobile (1 row), spread on desktop */}
+                    <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-xs sm:text-sm text-slate-200 rounded-xl px-2 sm:px-3 py-2 outline-none cursor-pointer font-light col-span-1">
+                        <option value="all">Nhân viên</option>
                         {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.full_name}</option>)}
                     </select>
 
-                    <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-sm text-slate-200 rounded-xl px-3 py-2 outline-none cursor-pointer font-light">
+                    <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-xs sm:text-sm text-slate-200 rounded-xl px-2 sm:px-3 py-2 outline-none cursor-pointer font-light col-span-1">
                         <option value="all">Trạng thái</option>
-                        <option value="active">Đang làm việc</option>
-                        <option value="finished">Đã hoàn thành</option>
+                        <option value="active">Đang làm</option>
+                        <option value="finished">Đã xong</option>
                     </select>
 
-                    <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-sm text-slate-200 rounded-xl px-3 py-2 outline-none cursor-pointer font-light">
-                        <option value="24h">24 giờ qua</option>
-                        <option value="7d">7 ngày qua</option>
-                        <option value="30d">30 ngày qua</option>
+                    <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)} className="bg-[#252d3d] border border-slate-700/50 text-xs sm:text-sm text-slate-200 rounded-xl px-2 sm:px-3 py-2 outline-none cursor-pointer font-light col-span-1">
+                        <option value="24h">24h qua</option>
+                        <option value="7d">7 ngày</option>
+                        <option value="30d">30 ngày</option>
                     </select>
                 </div>
 
@@ -249,79 +307,89 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                             const month = String(startDate.getMonth() + 1).padStart(2, '0');
                             const eventDate = `${day}/${month}`;
                             
-                            const startTime = startDate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
-                            const endTime = shift.end_time ? new Date(shift.end_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+                            const timeOptions: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', hour12: false };
+                            const startTime = startDate.toLocaleTimeString('vi-VN', timeOptions);
+                            const endTime = shift.end_time ? new Date(shift.end_time).toLocaleTimeString('vi-VN', timeOptions) : '...';
 
                             return (
-                                <div key={shift.id} className="flex items-center justify-between p-3.5 bg-[#252d3d]/50 rounded-2xl border border-slate-700/20 hover:border-slate-600/40 transition-all group relative">
-                                    <div className="flex items-center gap-4 flex-1">
-                                        <div className="flex flex-col items-center justify-center bg-[#1a1f2e] rounded-xl px-2 py-2 border border-slate-700/40 min-w-[65px] shadow-sm">
-                                            <span className="text-[9px] font-medium text-slate-500 mb-0.5 uppercase tracking-tighter">{eventDate}</span>
-                                            <span className="text-base font-bold text-[var(--accent-color)] leading-none">{startTime}</span>
-                                        </div>
-                                        
-                                        <div className="relative">
-                                            {employee?.avatar_url ? (
-                                                <img src={employee.avatar_url} className="w-10 h-10 rounded-full object-cover border border-slate-700/30" alt="" />
-                                            ) : (
-                                                <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-medium text-slate-300">
-                                                    {(employee?.full_name || '?').charAt(0)}
-                                                </div>
-                                            )}
-                                            {isActive && (
-                                                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-[#1a1f2e] rounded-full shadow-lg animate-pulse"></span>
-                                            )}
-                                        </div>
-                                        
-                                        <div className="space-y-0.5 min-w-0">
-                                            <p className="font-medium text-slate-100 text-sm truncate">{employee?.full_name || 'Nhân viên'}</p>
-                                            <div className="flex items-center gap-2 text-[10px] font-light">
-                                                {isActive ? (
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-emerald-400 font-medium">Đang làm việc</span>
-                                                        <span className="text-slate-600">|</span>
-                                                        <ActiveTimer startISO={shift.start_time} />
-                                                    </div>
+                                <div key={shift.id} className="p-3.5 bg-[#252d3d]/50 rounded-2xl border border-slate-700/20 hover:border-slate-600/40 transition-all group relative">
+                                    <div className="flex gap-4">
+                                        {/* Column 1: Avatar & Date (Vertical Stack) */}
+                                        <div className="flex flex-col items-center gap-2 min-w-[48px] shrink-0">
+                                            <div className="relative">
+                                                {employee?.avatar_url ? (
+                                                    <img src={employee.avatar_url} className="w-10 h-10 rounded-full object-cover border border-slate-700/30" alt="" />
                                                 ) : (
-                                                    <span className="text-slate-400">Kết thúc: {endTime} <span className="text-slate-600 mx-1">•</span> Thời lượng: {formatPreciseDuration(shift.start_time, shift.end_time!)}</span>
+                                                    <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs font-medium text-slate-300">
+                                                        {(employee?.full_name || '?').charAt(0)}
+                                                    </div>
+                                                )}
+                                                {isActive && (
+                                                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-[#1a1f2e] rounded-full shadow-lg animate-pulse"></span>
                                                 )}
                                             </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <div className="flex items-center gap-4">
-                                        <div className="text-right">
-                                            <div className="flex items-center justify-end gap-1 text-emerald-400 font-medium">
-                                                <p className="text-base">{shift.revenue?.toLocaleString()}₫</p>
+                                            {/* UPDATED: Date display clearer (white text, slate-800 bg) */}
+                                            <div className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-200 whitespace-nowrap shadow-sm">
+                                                {eventDate}
                                             </div>
                                         </div>
 
-                                        <div className="flex items-center gap-2 pl-4 border-l border-slate-700/50">
-                                            {isActive && (
+                                        {/* Column 2: Main Info (Name, Time, Duration) */}
+                                        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
+                                            <div className="flex items-center justify-between">
+                                                <p className="font-medium text-slate-100 text-sm truncate pr-2">{employee?.full_name || 'Nhân viên'}</p>
+                                            </div>
+                                            
+                                            <div className="flex items-center gap-2 text-xs">
+                                                <span className="text-[var(--accent-color)] font-mono tracking-tight">{startTime}</span>
+                                                <span className="text-slate-500">-</span>
+                                                <span className={`font-mono tracking-tight ${isActive ? 'text-emerald-400 font-bold animate-pulse' : 'text-slate-300'}`}>
+                                                    {isActive ? 'Live' : endTime}
+                                                </span>
+                                            </div>
+
+                                            <div className="flex items-center gap-1.5 mt-0.5">
+                                                {/* UPDATED: Duration badge color to Orange for finished state too */}
+                                                <ClockIcon size={12} className={isActive ? "text-amber-500" : "text-orange-400"} />
+                                                <div className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isActive ? 'text-amber-400 bg-amber-500/10' : 'text-orange-300 bg-orange-500/10 border border-orange-500/20'}`}>
+                                                    {isActive ? <ActiveTimer startISO={shift.start_time} /> : formatPreciseDuration(shift.start_time, shift.end_time!)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Column 3: Revenue & Actions (Vertical Align) */}
+                                        <div className="flex flex-col items-end justify-between gap-2 pl-3 border-l border-slate-700/30 min-w-[70px]">
+                                            <div className="text-emerald-400 font-medium text-sm sm:text-base whitespace-nowrap">
+                                                {shift.revenue?.toLocaleString()}₫
+                                            </div>
+
+                                            <div className="flex items-center gap-1 mt-auto">
+                                                {isActive && (
+                                                    <button 
+                                                        onClick={(e) => promptForceEndShift(e, shift.id)}
+                                                        className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg transition-all"
+                                                        title="Kết thúc"
+                                                    >
+                                                        <StopIcon size={12} />
+                                                    </button>
+                                                )}
+                                                
                                                 <button 
-                                                    onClick={(e) => handleForceEndShift(e, shift.id)}
-                                                    className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg transition-all"
-                                                    title="Kết thúc ca"
+                                                    onClick={() => handleEditClick(shift)}
+                                                    className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-sky-400 transition-all"
+                                                    title="Sửa"
                                                 >
-                                                    <StopIcon size={14} />
+                                                    <EditIcon size={12} />
                                                 </button>
-                                            )}
-                                            
-                                            <button 
-                                                onClick={() => handleEditClick(shift)}
-                                                className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-sky-400 transition-all"
-                                                title="Sửa ca"
-                                            >
-                                                <EditIcon size={14} />
-                                            </button>
-                                            
-                                            <button 
-                                                onClick={() => handleDeleteShift(shift.id)}
-                                                className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-red-400 transition-all"
-                                                title="Xóa ca"
-                                            >
-                                                <TrashIcon size={14} />
-                                            </button>
+                                                
+                                                <button 
+                                                    onClick={() => promptDeleteShift(shift.id)}
+                                                    className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-red-400 transition-all"
+                                                    title="Xóa"
+                                                >
+                                                    <TrashIcon size={12} />
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -339,6 +407,16 @@ const ShiftsNotificationModal: React.FC<ShiftsNotificationModalProps> = ({ isOpe
                     entry={editingEntry}
                 />
             )}
+
+            <ConfirmModal 
+                isOpen={confirmState.isOpen}
+                onClose={() => setConfirmState(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={handleConfirmAction}
+                title={confirmState.title}
+                message={confirmState.message}
+                confirmText={confirmState.confirmText}
+                type={confirmState.confirmType}
+            />
         </div>
     );
 };
